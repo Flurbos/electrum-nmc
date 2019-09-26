@@ -84,6 +84,16 @@ class NotificationSession(RPCSession):
         self.interface = None  # type: Optional[Interface]
         self.cost_hard_limit = 0  # disable aiorpcx resource limits
 
+    # The default Bitcoin frame size limit of 1 MB doesn't work for AuxPoW-
+    # based chains, because those chains' block headers have extra AuxPoW data.
+    # A limit of 10 MB works fine for Namecoin as of block height 418744 (5 MB
+    # fails after height 155232); we set a limit of 20 MB so that we have extra
+    # wiggle room.
+    def default_framer(self):
+        framer = super(NotificationSession, self).default_framer()
+        framer.max_size = 20000000
+        return framer
+
     async def handle_request(self, request):
         self.maybe_log(f"--> {request}")
         try:
@@ -414,8 +424,13 @@ class Interface(Logger):
         self.logger.info(f'requesting block header {height} in mode {assert_mode}')
         # use lower timeout as we usually have network.bhi_lock here
         timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Urgent)
-        res = await self.session.send_request('blockchain.block.header', [height], timeout=timeout)
-        return blockchain.deserialize_header(bytes.fromhex(res), height)
+        cp_height = constants.net.max_checkpoint()
+        if height > cp_height:
+            cp_height = 0
+        res = await self.session.send_request('blockchain.block.header', [height, cp_height], timeout=timeout)
+        if cp_height != 0:
+            res = res["header"]
+        return blockchain.deserialize_full_header(bytes.fromhex(res), height)
 
     async def request_chunk(self, height, tip=None, *, can_return_early=False):
         index = height // 2016
@@ -427,8 +442,11 @@ class Interface(Logger):
             size = min(size, tip - index * 2016 + 1)
             size = max(size, 0)
         try:
+            cp_height = constants.net.max_checkpoint()
+            if index * 2016 + size - 1 > cp_height:
+                cp_height = 0
             self._requested_chunks.add(index)
-            res = await self.session.send_request('blockchain.block.headers', [index * 2016, size])
+            res = await self.session.send_request('blockchain.block.headers', [index * 2016, size, cp_height])
         finally:
             try: self._requested_chunks.remove(index)
             except KeyError: pass
@@ -493,7 +511,7 @@ class Interface(Logger):
             item = await header_queue.get()
             raw_header = item[0]
             height = raw_header['height']
-            header = blockchain.deserialize_header(bfh(raw_header['hex']), height)
+            header = blockchain.deserialize_full_header(bfh(raw_header['hex']), height)
             self.tip_header = header
             self.tip = height
             if self.tip < constants.net.max_checkpoint():
