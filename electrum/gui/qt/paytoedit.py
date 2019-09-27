@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
-# Electrum - lightweight Bitcoin client
-# Copyright (C) 2012 thomasv@gitorious
+# Electrum - lightweight Unobtanium client
+# Copyright (C) 2019 choicesz@unobtanium.uno
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation files
@@ -128,7 +128,7 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
         self.payto_address = None
         if len(lines) == 1:
             data = lines[0]
-            if data.startswith("bitcoin:"):
+            if data.startswith("unobtanium:"):
                 self.win.pay_to_URI(data)
                 return
             l = data.lower()
@@ -209,7 +209,7 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
 
     def qr_input(self):
         data = super(PayToEdit,self).qr_input()
-        if data.startswith("bitcoin:"):
+        if data.startswith("unobtanium:"):
             self.win.pay_to_URI(data)
             # TODO: update fee
 

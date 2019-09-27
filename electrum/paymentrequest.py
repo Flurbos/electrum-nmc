@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
-# Electrum - lightweight Bitcoin client
-# Copyright (C) 2014 Thomas Voegtlin
+# Electrum - lightweight Unobtanium client
+# Copyright (C) 2019 BadChoicesZ
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation files
