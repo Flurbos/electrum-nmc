@@ -142,13 +142,13 @@ class ExchangeBase(Logger):
         return sorted([str(a) for (a, b) in rates.items() if b is not None and len(a)==3])
 
 
-def convert_btc_to_ccy(self, ccy, btc):
-    json = self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+async def convert_btc_to_ccy(self, ccy, btc):
+    json = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
     return Decimal(json['last']) * btc
 
 class CoinExchange(ExchangeBase):
-    def get_rates(self, ccy):
-        json = self.get_json('coinexchange.io', '/api/v1/getmarketsummary?market_id=19')
+    async def get_rates(self, ccy):
+        json = await self.get_json('coinexchange.io', '/api/v1/getmarketsummary?market_id=19')
         return {ccy: self.convert_btc_to_ccy(ccy, Decimal(json['Result']['LastPrice']))}
 
 def dictinvert(d):
