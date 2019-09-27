@@ -141,15 +141,36 @@ class ExchangeBase(Logger):
         rates = await self.get_rates('')
         return sorted([str(a) for (a, b) in rates.items() if b is not None and len(a)==3])
 
-
-async def convert_btc_to_ccy(self, ccy, btc):
-    json = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
-    return Decimal(json['last']) * btc
-
 class CoinExchange(ExchangeBase):
     async def get_rates(self, ccy):
         json = await self.get_json('coinexchange.io', '/api/v1/getmarketsummary?market_id=19')
-        return {ccy: self.convert_btc_to_ccy(ccy, Decimal(json['Result']['LastPrice']))}
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['result']['LastPrice'])}
+
+class FreiExchange(ExchangeBase):
+    async def get_rates(self, ccy):
+        json = await self.get_json('api.freiexchange.com', '/public/ticker/UNO')
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['UNO_BTC']['last'])}
+
+class NovaExchange(ExchangeBase):
+    async def get_rates(self, ccy):
+        json = await self.get_json('novaexchange.com', '/remote/v2/market/info/BTC_UNO')
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['markets']['last_price'])}
+
+class NLExch(ExchangeBase):
+    async def get_rates(self, ccy):
+        json = await self.get_json('nlexch.com', '/api/v2/tickers/unobtc.json')
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['ticker']['last'])}
+
+class bisq(ExchangeBase):
+    async def get_rates(self, ccy):
+        json = await self.get_json('markets.bisq.network', '/api/ticker?market=btc_uno')
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['btc_uno']['last'])}
+
 
 def dictinvert(d):
     inv = {}
