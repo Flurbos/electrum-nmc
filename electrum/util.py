@@ -682,12 +682,16 @@ def time_difference(distance_in_time, include_seconds):
 
 mainnet_block_explorers = {
     'Cryptoid.info': ('https://chainz.cryptoid.info/uno/',
-                        {'tx': 'transactions', 'addr': 'addresses'}),
+                        {'tx': 'tx.dws?', 'addr': 'address.dws?'}),
+    'Flurbo.xyz': ('https://blockbook.flurbo.xyz/',
+                        {'tx': 'tx/', 'addr': 'address/'}),
+    'Unobtanium.uno': ('https://blockbook.unobtanium.uno/',
+                        {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 testnet_block_explorers = {
     'Cryptoid.info': ('https://chainz.cryptoid.info/tuno/',
-                        {'tx': 'transactions', 'addr': 'addresses'}),
+                        {'tx': 'tx.dws?', 'addr': 'address.dws?'}),
 }
 
 def block_explorer_info():
