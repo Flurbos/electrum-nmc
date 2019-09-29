@@ -168,7 +168,7 @@ class ElectrumWindow(App):
 
     def on_new_intent(self, intent):
         data = intent.getDataString()
-        if intent.getScheme() == 'bitcoin':
+        if intent.getScheme() == 'unobtanium':
             self.set_URI(data)
         elif intent.getScheme() == 'lightning':
             self.set_ln_invoice(data)
