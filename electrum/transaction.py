@@ -622,7 +622,7 @@ class Transaction:
         self._inputs = None
         self._outputs = None  # type: List[TxOutput]
         self.locktime = 0
-        self.version = 2
+        self.version = 1
         self.name = None
         self.csv_delay = 0
         self.cltv_expiry = 0
