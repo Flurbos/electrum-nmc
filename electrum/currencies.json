@@ -652,6 +652,14 @@
         "ZWL"
     ],
     "CoinExchange": [
+        "AUD",
+        "EUR",
+        "NGN",
+        "NZD",
+        "USD",
+        "YEN"
+    ],
+    "Altilly": [
         "AED",
         "AFN",
         "ALL",
