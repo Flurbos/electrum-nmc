@@ -23,7 +23,7 @@ from .logging import Logger
 
 DEFAULT_ENABLED = False
 DEFAULT_CURRENCY = "USD"
-DEFAULT_EXCHANGE = "CoinExchange"  # default exchange should ideally provide historical rates
+DEFAULT_EXCHANGE = "Altilly"  # default exchange should ideally provide historical rates
 
 
 # See https://en.wikipedia.org/wiki/ISO_4217
@@ -170,6 +170,12 @@ class bisq(ExchangeBase):
         json = await self.get_json('markets.bisq.network', '/api/ticker?market=btc_uno')
         btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
         return {ccy: Decimal(btcv['last']) * Decimal(json['btc_uno']['last'])}
+      
+class Altilly(ExchangeBase):
+    async def get_rates(self, ccy):
+        json = await self.get_json('api.altilly.com', '/api/public/currency/uno')
+        btcv = await self.get_json('apiv2.bitcoinaverage.com', '/indices/global/ticker/BTC%s' % ccy)
+        return {ccy: Decimal(btcv['last']) * Decimal(json['coininfo']['price_btc'])}
 
 
 def dictinvert(d):
