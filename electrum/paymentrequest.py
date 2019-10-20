@@ -168,7 +168,7 @@ class PaymentRequest:
             return True
         if pr.pki_type in ["x509+sha256", "x509+sha1"]:
             return self.verify_x509(pr)
-        elif pr.pki_type in ["dnssec+btc", "dnssec+ecdsa"]:
+        elif pr.pki_type in ["dnssec+uno", "dnssec+ecdsa"]:
             return self.verify_dnssec(pr, contacts)
         else:
             self.error = "ERROR: Unsupported PKI Type for Message Signature"
@@ -221,7 +221,7 @@ class PaymentRequest:
         if info.get('validated') is not True:
             self.error = "Alias verification failed (DNSSEC)"
             return False
-        if pr.pki_type == "dnssec+btc":
+        if pr.pki_type == "dnssec+uno":
             self.requestor = alias
             address = info.get('address')
             pr.signature = b''
@@ -341,7 +341,7 @@ def make_unsigned_request(req):
 
 
 def sign_request_with_alias(pr, alias, alias_privkey):
-    pr.pki_type = 'dnssec+btc'
+    pr.pki_type = 'dnssec+uno'
     pr.pki_data = str(alias)
     message = pr.SerializeToString()
     ec_key = ecc.ECPrivkey(alias_privkey)
@@ -448,7 +448,7 @@ def serialize_request(req):
     requestor = req.get('name')
     if requestor and signature:
         pr.signature = bfh(signature)
-        pr.pki_type = 'dnssec+btc'
+        pr.pki_type = 'dnssec+uno'
         pr.pki_data = str(requestor)
     return pr
 
