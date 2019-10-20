@@ -112,7 +112,7 @@ Builder.load_string('''
                     height: '48dp'
                     text: _('OK')
                     on_release:
-                        root.callback(btc.text if kb.amount else '')
+                        root.callback(uno.text if kb.amount else '')
                         popup.dismiss()
 ''')
 
