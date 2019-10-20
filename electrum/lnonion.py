@@ -32,7 +32,8 @@ from Cryptodome.Cipher import ChaCha20
 from . import ecc
 from .crypto import sha256, hmac_oneshot
 from .util import bh2u, profiler, xor_bytes, bfh
-from .lnutil import get_ecdh, PaymentFailure, NUM_MAX_HOPS_IN_PAYMENT_PATH, NUM_MAX_EDGES_IN_PAYMENT_PATH
+from .lnutil import (get_ecdh, PaymentFailure, NUM_MAX_HOPS_IN_PAYMENT_PATH,
+                     NUM_MAX_EDGES_IN_PAYMENT_PATH, ShortChannelID)
 
 if TYPE_CHECKING:
     from .lnrouter import RouteEdge
@@ -51,7 +52,7 @@ class InvalidOnionMac(Exception): pass
 class OnionPerHop:
 
     def __init__(self, short_channel_id: bytes, amt_to_forward: bytes, outgoing_cltv_value: bytes):
-        self.short_channel_id = short_channel_id
+        self.short_channel_id = ShortChannelID(short_channel_id)
         self.amt_to_forward = amt_to_forward
         self.outgoing_cltv_value = outgoing_cltv_value
 
@@ -347,7 +348,10 @@ def get_failure_msg_from_onion_error(decrypted_error_packet: bytes) -> OnionRout
     failure_msg = decrypted_error_packet[34:34+failure_len]
     # create failure message object
     failure_code = int.from_bytes(failure_msg[:2], byteorder='big')
-    failure_code = OnionFailureCode(failure_code)
+    try:
+        failure_code = OnionFailureCode(failure_code)
+    except ValueError:
+        pass  # uknown failure code
     failure_data = failure_msg[2:]
     return OnionRoutingFailureMessage(failure_code, failure_data)
 
@@ -385,12 +389,6 @@ class OnionFailureCode(IntEnum):
     FINAL_INCORRECT_HTLC_AMOUNT =             19
     CHANNEL_DISABLED =                        UPDATE | 20
     EXPIRY_TOO_FAR =                          21
-
-    @classmethod
-    def _missing_(cls, value: int) -> int:
-        # note that for unknown error codes, we return an int,
-        # not an instance of cls
-        return value
 
 
 # don't use these elsewhere, the names are ambiguous without context

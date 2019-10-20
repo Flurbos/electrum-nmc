@@ -28,7 +28,7 @@ import signal
 import sys
 import traceback
 import threading
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 
 try:
@@ -56,6 +56,12 @@ from .main_window import ElectrumWindow
 from .network_dialog import NetworkDialog
 from .stylesheet_patcher import patch_qt_stylesheet
 from .lightning_dialog import LightningDialog
+from .watchtower_dialog import WatchtowerDialog
+
+if TYPE_CHECKING:
+    from electrum.daemon import Daemon
+    from electrum.simple_config import SimpleConfig
+    from electrum.plugin import Plugins
 
 
 class OpenFileEventFilter(QObject):
@@ -82,7 +88,7 @@ class QNetworkUpdatedSignalObject(QObject):
 class ElectrumGui(Logger):
 
     @profiler
-    def __init__(self, config, daemon, plugins):
+    def __init__(self, config: 'SimpleConfig', daemon: 'Daemon', plugins: 'Plugins'):
         set_language(config.get('language', get_default_language()))
         Logger.__init__(self)
         # Uncomment this call to verify objects are being properly
@@ -110,6 +116,7 @@ class ElectrumGui(Logger):
 
         self.network_dialog = None
         self.lightning_dialog = None
+        self.watchtower_dialog = None
         self.network_updated_signal_obj = QNetworkUpdatedSignalObject()
         self._num_wizards_in_progress = 0
         self._num_wizards_lock = threading.Lock()
@@ -148,8 +155,8 @@ class ElectrumGui(Logger):
         else:
             m = self.tray.contextMenu()
             m.clear()
-        if self.config.get('lightning'):
-            m.addAction(_("Lightning"), self.show_lightning_dialog)
+        m.addAction(_("Lightning"), self.show_lightning_dialog)
+        m.addAction(_("Watchtower"), self.show_watchtower_dialog)
         for window in self.windows:
             name = window.wallet.basename()
             submenu = m.addMenu(name)
@@ -186,6 +193,8 @@ class ElectrumGui(Logger):
             self.network_dialog.close()
         if self.lightning_dialog:
             self.lightning_dialog.close()
+        if self.watchtower_dialog:
+            self.watchtower_dialog.close()
 
     def new_window(self, path, uri=None):
         # Use a signal as can be called from daemon thread
@@ -195,6 +204,11 @@ class ElectrumGui(Logger):
         if not self.lightning_dialog:
             self.lightning_dialog = LightningDialog(self)
         self.lightning_dialog.bring_to_top()
+
+    def show_watchtower_dialog(self):
+        if not self.watchtower_dialog:
+            self.watchtower_dialog = WatchtowerDialog(self)
+        self.watchtower_dialog.bring_to_top()
 
     def show_network_dialog(self, parent):
         if not self.daemon.network:
@@ -303,7 +317,7 @@ class ElectrumGui(Logger):
         # return if wallet creation is not complete
         if storage is None or storage.get_action():
             return
-        wallet = Wallet(storage)
+        wallet = Wallet(storage, config=self.config)
         wallet.start_network(self.daemon.network)
         self.daemon.add_wallet(wallet)
         return wallet
@@ -338,8 +352,7 @@ class ElectrumGui(Logger):
             return
         self.timer.start()
 
-        self.config.open_last_wallet()
-        path = self.config.get_wallet_path()
+        path = self.config.get_wallet_path(use_gui_last_wallet=True)
         if not self.start_new_window(path, self.config.get('url'), app_is_starting=True):
             return
         signal.signal(signal.SIGINT, lambda *args: self.app.quit())

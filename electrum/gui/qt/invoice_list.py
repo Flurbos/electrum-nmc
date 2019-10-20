@@ -27,25 +27,26 @@ from enum import IntEnum
 
 from PyQt5.QtCore import Qt, QItemSelectionModel
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QFont
-from PyQt5.QtWidgets import QHeaderView, QMenu
+from PyQt5.QtWidgets import QHeaderView, QMenu, QVBoxLayout, QGridLayout, QLabel, QTreeWidget, QTreeWidgetItem
 
 from electrum.i18n import _
-from electrum.util import format_time, pr_tooltips, PR_UNPAID
-from electrum.lnutil import lndecode, RECEIVED
+from electrum.util import format_time, PR_UNPAID, PR_PAID, PR_INFLIGHT
+from electrum.util import get_request_status
+from electrum.util import PR_TYPE_ONCHAIN, PR_TYPE_LN
+from electrum.lnutil import format_short_channel_id
 from electrum.bitcoin import COIN
 from electrum import constants
 
-from .util import (MyTreeView, read_QIcon, MONOSPACE_FONT, PR_UNPAID,
+from .util import (MyTreeView, read_QIcon, MONOSPACE_FONT,
                    import_meta_gui, export_meta_gui, pr_icons)
+from .util import CloseButton, Buttons
+from .util import WindowModalDialog
 
 
-REQUEST_TYPE_BITCOIN = 0
-REQUEST_TYPE_LN = 1
 
 ROLE_REQUEST_TYPE = Qt.UserRole
 ROLE_REQUEST_ID = Qt.UserRole + 1
 
-from electrum.paymentrequest import PR_PAID
 
 class InvoiceList(MyTreeView):
 
@@ -56,7 +57,7 @@ class InvoiceList(MyTreeView):
         STATUS = 3
 
     headers = {
-        Columns.DATE: _('Expires'),
+        Columns.DATE: _('Date'),
         Columns.DESCRIPTION: _('Description'),
         Columns.AMOUNT: _('Amount'),
         Columns.STATUS: _('Status'),
@@ -67,52 +68,64 @@ class InvoiceList(MyTreeView):
         super().__init__(parent, self.create_menu,
                          stretch_column=self.Columns.DESCRIPTION,
                          editable_columns=[])
+        self.logs = {}
         self.setSortingEnabled(True)
         self.setModel(QStandardItemModel(self))
         self.update()
 
+    def update_item(self, key, status, log):
+        req = self.parent.wallet.get_invoice(key)
+        if req is None:
+            return
+        model = self.model()
+        for row in range(0, model.rowCount()):
+            item = model.item(row, 0)
+            if item.data(ROLE_REQUEST_ID) == key:
+                break
+        else:
+            return
+        status_item = model.item(row, self.Columns.STATUS)
+        status_str = get_request_status(req)
+        if log:
+            self.logs[key] = log
+            if status == PR_INFLIGHT:
+                status_str += '... (%d)'%len(log)
+        status_item.setText(status_str)
+        status_item.setIcon(read_QIcon(pr_icons.get(status)))
+
     def update(self):
-        inv_list = self.parent.invoices.unpaid_invoices()
+        _list = self.parent.wallet.get_invoices()
+        # filter out paid invoices unless we have the log
+        _list = [x for x in _list if x and x.get('status') != PR_PAID or x.get('rhash') in self.logs]
         self.model().clear()
         self.update_headers(self.__class__.headers)
-        for idx, pr in enumerate(inv_list):
-            key = pr.get_id()
-            status = self.parent.invoices.get_status(key)
-            if status is None:
-                continue
-            requestor = pr.get_requestor()
-            exp = pr.get_time()
-            date_str = format_time(exp) if exp else _('Never')
-            labels = [date_str, '[%s] '%requestor + pr.memo, self.parent.format_amount(pr.get_amount(), whitespaces=True), pr_tooltips.get(status,'')]
+        for idx, item in enumerate(_list):
+            invoice_type = item['type']
+            if invoice_type == PR_TYPE_LN:
+                key = item['rhash']
+                icon_name = 'lightning.png'
+            elif invoice_type == PR_TYPE_ONCHAIN:
+                key = item['id']
+                icon_name = 'bitcoin.png'
+                if item.get('bip70'):
+                    icon_name = 'seal.png'
+            else:
+                raise Exception('Unsupported type')
+            status = item['status']
+            status_str = get_request_status(item) # convert to str
+            message = item['message']
+            amount = item['amount']
+            timestamp = item.get('time', 0)
+            date_str = format_time(timestamp) if timestamp else _('Unknown')
+            amount_str = self.parent.format_amount(amount, whitespaces=True)
+            labels = [date_str, message, amount_str, status_str]
             items = [QStandardItem(e) for e in labels]
             self.set_editability(items)
-            items[self.Columns.DATE].setIcon(read_QIcon('bitcoin.png'))
+            items[self.Columns.DATE].setIcon(read_QIcon(icon_name))
             items[self.Columns.STATUS].setIcon(read_QIcon(pr_icons.get(status)))
             items[self.Columns.DATE].setData(key, role=ROLE_REQUEST_ID)
-            items[self.Columns.DATE].setData(REQUEST_TYPE_BITCOIN, role=ROLE_REQUEST_TYPE)
+            items[self.Columns.DATE].setData(invoice_type, role=ROLE_REQUEST_TYPE)
             self.model().insertRow(idx, items)
-
-        lnworker = self.parent.wallet.lnworker
-        items = list(lnworker.invoices.items()) if lnworker else []
-        for key, (invoice, direction, is_paid) in items:
-            if direction == RECEIVED:
-                continue
-            status = lnworker.get_invoice_status(key)
-            if status == PR_PAID:
-                continue
-            lnaddr = lndecode(invoice, expected_hrp=constants.net.SEGWIT_HRP)
-            amount_sat = lnaddr.amount*COIN if lnaddr.amount else None
-            amount_str = self.parent.format_amount(amount_sat) if amount_sat else ''
-            description = lnaddr.get_description()
-            date_str = format_time(lnaddr.date)
-            labels = [date_str, description, amount_str, pr_tooltips.get(status,'')]
-            items = [QStandardItem(e) for e in labels]
-            self.set_editability(items)
-            items[self.Columns.DATE].setIcon(read_QIcon('lightning.png'))
-            items[self.Columns.STATUS].setIcon(read_QIcon(pr_icons.get(status)))
-            items[self.Columns.DATE].setData(key, role=ROLE_REQUEST_ID)
-            items[self.Columns.DATE].setData(REQUEST_TYPE_LN, role=ROLE_REQUEST_TYPE)
-            self.model().insertRow(self.model().rowCount(), items)
 
         self.selectionModel().select(self.model().index(0,0), QItemSelectionModel.SelectCurrent)
         # sort requests by date
@@ -138,29 +151,37 @@ class InvoiceList(MyTreeView):
             return
         key = item_col0.data(ROLE_REQUEST_ID)
         request_type = item_col0.data(ROLE_REQUEST_TYPE)
-        assert request_type in [REQUEST_TYPE_BITCOIN, REQUEST_TYPE_LN]
-        column = idx.column()
-        column_title = self.model().horizontalHeaderItem(column).text()
-        column_data = item.text()
         menu = QMenu(self)
-        if column_data:
-            if column == self.Columns.AMOUNT:
-                column_data = column_data.strip()
-            menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.app.clipboard().setText(column_data))
-        if request_type == REQUEST_TYPE_BITCOIN:
-            self.create_menu_bitcoin_payreq(menu, key)
-        elif request_type == REQUEST_TYPE_LN:
-            self.create_menu_ln_payreq(menu, key)
+        self.add_copy_menu(menu, idx)
+        invoice = self.parent.wallet.get_invoice(key)
+        menu.addAction(_("Details"), lambda: self.parent.show_invoice(key))
+        if invoice['status'] == PR_UNPAID:
+            menu.addAction(_("Pay"), lambda: self.parent.do_pay_invoice(invoice))
+        if key in self.logs:
+            menu.addAction(_("View log"), lambda: self.show_log(key))
+        menu.addAction(_("Delete"), lambda: self.parent.delete_invoice(key))
         menu.exec_(self.viewport().mapToGlobal(position))
 
-    def create_menu_bitcoin_payreq(self, menu, payreq_key):
-        status = self.parent.invoices.get_status(payreq_key)
-        menu.addAction(_("Details"), lambda: self.parent.show_invoice(payreq_key))
-        if status == PR_UNPAID:
-            menu.addAction(_("Pay Now"), lambda: self.parent.do_pay_invoice(payreq_key))
-        menu.addAction(_("Delete"), lambda: self.parent.delete_invoice(payreq_key))
-
-    def create_menu_ln_payreq(self, menu, payreq_key):
-        req = self.parent.wallet.lnworker.invoices[payreq_key][0]
-        menu.addAction(_("Copy Lightning invoice"), lambda: self.parent.do_copy('Lightning invoice', req))
-        menu.addAction(_("Delete"), lambda: self.parent.delete_lightning_payreq(payreq_key))
+    def show_log(self, key):
+        log = self.logs.get(key)
+        d = WindowModalDialog(self, _("Payment log"))
+        vbox = QVBoxLayout(d)
+        log_w = QTreeWidget()
+        log_w.setHeaderLabels([_('Route'), _('Channel ID'), _('Message'), _('Blacklist')])
+        for i, (route, success, failure_log) in enumerate(log):
+            route_str = '%d'%len(route)
+            if not success:
+                sender_idx, failure_msg, blacklist = failure_log
+                short_channel_id = route[sender_idx+1].short_channel_id
+                data = failure_msg.data
+                message = repr(failure_msg.code)
+            else:
+                short_channel_id = route[-1].short_channel_id
+                message = _('Success')
+                blacklist = False
+            chan_str = format_short_channel_id(short_channel_id)
+            x = QTreeWidgetItem([route_str, chan_str, message, repr(blacklist)])
+            log_w.addTopLevelItem(x)
+        vbox.addWidget(log_w)
+        vbox.addLayout(Buttons(CloseButton(d)))
+        d.exec_()

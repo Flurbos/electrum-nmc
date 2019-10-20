@@ -2,8 +2,9 @@ from PyQt5.QtWidgets import QFileDialog
 
 from electrum.i18n import _
 from electrum.plugin import run_hook
+from electrum.simple_config import SimpleConfig
 
-from .util import ButtonsTextEdit, MessageBoxMixin, ColorScheme
+from .util import ButtonsTextEdit, MessageBoxMixin, ColorScheme, get_parent_main_window
 
 
 class ShowQRTextEdit(ButtonsTextEdit):
@@ -22,7 +23,7 @@ class ShowQRTextEdit(ButtonsTextEdit):
             s = str(self.toPlainText())
         except:
             s = self.toPlainText()
-        QRDialog(s).exec_()
+        QRDialog(s, parent=self).exec_()
 
     def contextMenuEvent(self, e):
         m = self.createStandardContextMenu()
@@ -54,9 +55,12 @@ class ScanQRTextEdit(ButtonsTextEdit, MessageBoxMixin):
             self.setText(data)
 
     def qr_input(self):
-        from electrum import qrscanner, get_config
+        from electrum import qrscanner
+        main_window = get_parent_main_window(self)
+        assert main_window
+        config = main_window.config
         try:
-            data = qrscanner.scan_barcode(get_config().get_video_device())
+            data = qrscanner.scan_barcode(config.get_video_device())
         except BaseException as e:
             self.show_error(repr(e))
             data = ''

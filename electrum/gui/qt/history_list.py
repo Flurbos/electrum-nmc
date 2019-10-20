@@ -52,6 +52,7 @@ from .util import (read_QIcon, MONOSPACE_FONT, Buttons, CancelButton, OkButton,
 
 if TYPE_CHECKING:
     from electrum.wallet import Abstract_Wallet
+    from .main_window import ElectrumWindow
 
 
 _logger = get_logger(__name__)
@@ -107,7 +108,7 @@ def get_item_key(tx_item):
 
 class HistoryModel(QAbstractItemModel, Logger):
 
-    def __init__(self, parent):
+    def __init__(self, parent: 'ElectrumWindow'):
         QAbstractItemModel.__init__(self, parent)
         Logger.__init__(self)
         self.parent = parent
@@ -196,9 +197,9 @@ class HistoryModel(QAbstractItemModel, Logger):
             elif col != HistoryColumns.STATUS and role == Qt.FontRole:
                 monospace_font = QFont(MONOSPACE_FONT)
                 return QVariant(monospace_font)
-            elif col == HistoryColumns.DESCRIPTION and role == Qt.DecorationRole and not is_lightning\
-                    and self.parent.wallet.invoices.paid.get(tx_hash):
-                return QVariant(read_QIcon("seal"))
+            #elif col == HistoryColumns.DESCRIPTION and role == Qt.DecorationRole and not is_lightning\
+            #        and self.parent.wallet.invoices.paid.get(tx_hash):
+            #    return QVariant(read_QIcon("seal"))
             elif col in (HistoryColumns.DESCRIPTION, HistoryColumns.AMOUNT) \
                     and role == Qt.ForegroundRole and not is_lightning and tx_item['value'].value < 0:
                 red_brush = QBrush(QColor("#BC1E1E"))
@@ -248,10 +249,15 @@ class HistoryModel(QAbstractItemModel, Logger):
         tx_item['label'] = self.parent.wallet.get_label(get_item_key(tx_item))
         topLeft = bottomRight = self.createIndex(row, 2)
         self.dataChanged.emit(topLeft, bottomRight, [Qt.DisplayRole])
+        self.parent.utxo_list.update()
 
     def get_domain(self):
-        '''Overridden in address_dialog.py'''
+        """Overridden in address_dialog.py"""
         return self.parent.wallet.get_addresses()
+
+    def should_include_lightning_payments(self) -> bool:
+        """Overridden in address_dialog.py"""
+        return True
 
     @profiler
     def refresh(self, reason: str):
@@ -266,7 +272,9 @@ class HistoryModel(QAbstractItemModel, Logger):
         if fx: fx.history_used_spot = False
         wallet = self.parent.wallet
         self.set_visibility_of_columns()
-        transactions = wallet.get_full_history(self.parent.fx)
+        transactions = wallet.get_full_history(self.parent.fx,
+                                               onchain_domain=self.get_domain(),
+                                               include_lightning=self.should_include_lightning_payments())
         if transactions == list(self.transactions.values()):
             return
         old_length = len(self.transactions)
@@ -581,6 +589,16 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         label = self.wallet.get_label(tx_hash) or None # prefer 'None' if not defined (force tx dialog to hide Description field if missing)
         self.parent.show_transaction(tx, label)
 
+    def add_copy_menu(self, menu, idx):
+        cc = menu.addMenu(_("Copy column"))
+        for column in HistoryColumns:
+            if self.isColumnHidden(column):
+                continue
+            column_title = self.hm.headerData(column, Qt.Horizontal, Qt.DisplayRole)
+            idx2 = idx.sibling(idx.row(), column)
+            column_data = (self.hm.data(idx2, Qt.DisplayRole).value() or '').strip()
+            cc.addAction(column_title, lambda t=column_data: self.parent.app.clipboard().setText(t))
+
     def create_menu(self, position: QPoint):
         org_idx: QModelIndex = self.indexAt(position)
         idx = self.proxy.mapToSource(org_idx)
@@ -588,9 +606,6 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
             # can happen e.g. before list is populated for the first time
             return
         tx_item = self.hm.transactions.value_from_pos(idx.row())
-        column = idx.column()
-        column_title = self.hm.headerData(column, Qt.Horizontal, Qt.DisplayRole)
-        column_data = self.hm.data(idx, Qt.DisplayRole).value()
         if tx_item.get('lightning'):
             return
         tx_hash = tx_item['txid']
@@ -601,17 +616,12 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         height = self.wallet.get_tx_height(tx_hash).height
         is_relevant, is_mine, v, fee = self.wallet.get_wallet_delta(tx)
         is_unconfirmed = height <= 0
-        pr_key = self.wallet.invoices.paid.get(tx_hash)
+        #pr_key = self.wallet.invoices.paid.get(tx_hash)
         menu = QMenu()
         if height in [TX_HEIGHT_FUTURE, TX_HEIGHT_LOCAL]:
             menu.addAction(_("Remove"), lambda: self.remove_local_tx(tx_hash))
         menu.addAction(_("Copy Transaction ID"), lambda: self.parent.app.clipboard().setText(tx_hash))
-
-        amount_columns = [HistoryColumns.AMOUNT, HistoryColumns.BALANCE,
-                          HistoryColumns.FIAT_VALUE, HistoryColumns.FIAT_ACQ_PRICE, HistoryColumns.FIAT_CAP_GAINS]
-        if column in amount_columns:
-            column_data = column_data.strip()
-        menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.app.clipboard().setText(column_data))
+        self.add_copy_menu(menu, idx)
         for c in self.editable_columns:
             if self.isColumnHidden(c): continue
             label = self.hm.headerData(c, Qt.Horizontal, Qt.DisplayRole)
@@ -628,8 +638,8 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                 child_tx = self.wallet.cpfp(tx, 0)
                 if child_tx:
                     menu.addAction(_("Child pays for parent"), lambda: self.parent.cpfp(tx, child_tx))
-        if pr_key:
-            menu.addAction(read_QIcon("seal"), _("View invoice"), lambda: self.parent.show_invoice(pr_key))
+        #if pr_key:
+        #    menu.addAction(read_QIcon("seal"), _("View invoice"), lambda: self.parent.show_invoice(pr_key))
         if tx_URL:
             menu.addAction(_("View on block explorer"), lambda: webopen(tx_URL))
         menu.exec_(self.viewport().mapToGlobal(position))
@@ -654,9 +664,12 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         try:
             with open(fn) as f:
                 tx = self.parent.tx_from_text(f.read())
-                self.parent.save_transaction_into_wallet(tx)
         except IOError as e:
             self.parent.show_error(e)
+            return
+        if not tx:
+            return
+        self.parent.save_transaction_into_wallet(tx)
 
     def export_history_dialog(self):
         d = WindowModalDialog(self, _('Export History'))
@@ -685,11 +698,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         self.parent.show_message(_("Your wallet history has been successfully exported."))
 
     def do_export_history(self, file_name, is_csv):
-        hist = self.wallet.get_full_history(domain=self.hm.get_domain(),
-                                            from_timestamp=None,
-                                            to_timestamp=None,
-                                            fx=self.parent.fx,
-                                            show_fees=True)
+        hist = self.wallet.get_detailed_history(fx=self.parent.fx)
         txns = hist['transactions']
         lines = []
         if is_csv:
@@ -697,7 +706,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                 lines.append([item['txid'],
                               item.get('label', ''),
                               item['confirmations'],
-                              item['value'],
+                              item['bc_value'],
                               item.get('fiat_value', ''),
                               item.get('fee', ''),
                               item.get('fiat_fee', ''),

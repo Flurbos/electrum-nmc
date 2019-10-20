@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout,
 
 from electrum.i18n import _, languages
 from electrum.util import FileImportFailed, FileExportFailed, make_aiohttp_session, resource_path
-from electrum.util import PR_UNPAID, PR_PAID, PR_EXPIRED, PR_INFLIGHT, PR_UNKNOWN
+from electrum.util import PR_UNPAID, PR_PAID, PR_EXPIRED, PR_INFLIGHT, PR_UNKNOWN, PR_FAILED
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -41,11 +41,12 @@ else:
 dialogs = []
 
 pr_icons = {
-    PR_UNKNOWN:"unpaid.png",
+    PR_UNKNOWN:"warning.png",
     PR_UNPAID:"unpaid.png",
     PR_PAID:"confirmed.png",
     PR_EXPIRED:"expired.png",
     PR_INFLIGHT:"unconfirmed.png",
+    PR_FAILED:"warning.png",
 }
 
 
@@ -458,7 +459,8 @@ class ElectrumItemDelegate(QStyledItemDelegate):
 
 class MyTreeView(QTreeView):
 
-    def __init__(self, parent: 'ElectrumWindow', create_menu, stretch_column=None, editable_columns=None):
+    def __init__(self, parent: 'ElectrumWindow', create_menu, *,
+                 stretch_column=None, editable_columns=None):
         super().__init__(parent)
         self.parent = parent
         self.config = self.parent.config
@@ -468,10 +470,12 @@ class MyTreeView(QTreeView):
         self.setUniformRowHeights(True)
 
         # Control which columns are editable
-        if editable_columns is None:
+        if editable_columns is not None:
+            editable_columns = set(editable_columns)
+        elif stretch_column is not None:
             editable_columns = {stretch_column}
         else:
-            editable_columns = set(editable_columns)
+            editable_columns = {}
         self.editable_columns = editable_columns
         self.setItemDelegate(ElectrumItemDelegate(self))
         self.current_filter = ""
@@ -622,6 +626,13 @@ class MyTreeView(QTreeView):
     def toggle_toolbar(self, config=None):
         self.show_toolbar(not self.toolbar_shown, config)
 
+    def add_copy_menu(self, menu, idx):
+        cc = menu.addMenu(_("Copy column"))
+        for column in self.Columns:
+            column_title = self.model().horizontalHeaderItem(column).text()
+            item_col = self.model().itemFromIndex(idx.sibling(idx.row(), column))
+            column_data = item_col.text().strip()
+            cc.addAction(column_title, lambda t=column_data: self.parent.app.clipboard().setText(t))
 
 class ButtonsWidget(QWidget):
 
