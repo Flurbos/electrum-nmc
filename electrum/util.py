@@ -748,7 +748,7 @@ def parse_URI(uri: str, on_pr: Callable = None, *, loop=None) -> dict:
         return {'address': uri}
 
     u = urllib.parse.urlparse(uri)
-    if u.scheme != 'bitcoin':
+    if u.scheme != 'unobtanium':
         raise InvalidBitcoinURI("Not a unobtanium URI")
     address = u.path
 
@@ -836,7 +836,7 @@ def create_bip21_uri(addr, amount_sat: Optional[int], message: Optional[str],
             raise Exception(f"illegal key for URI: {repr(k)}")
         v = urllib.parse.quote(v)
         query.append(f"{k}={v}")
-    p = urllib.parse.ParseResult(scheme='bitcoin', netloc='', path=addr, params='', query='&'.join(query), fragment='')
+    p = urllib.parse.ParseResult(scheme='unobtanium', netloc='', path=addr, params='', query='&'.join(query), fragment='')
     return str(urllib.parse.urlunparse(p))
 
 
