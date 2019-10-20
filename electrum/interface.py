@@ -167,7 +167,10 @@ class NotificationSession(RPCSession):
             self.interface.logger.debug(msg)
 
 
-class GracefulDisconnect(Exception):
+class NetworkException(Exception): pass
+
+
+class GracefulDisconnect(NetworkException):
     log_level = logging.INFO
 
     def __init__(self, *args, log_level=None, **kwargs):
@@ -183,7 +186,7 @@ class RequestTimedOut(GracefulDisconnect):
 
 class ErrorParsingSSLCert(Exception): pass
 class ErrorGettingSSLCertFromServer(Exception): pass
-class ConnectError(Exception): pass
+class ConnectError(NetworkException): pass
 
 
 class _RSClient(RSClient):
@@ -427,7 +430,7 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.block.header', [height, cp_height], timeout=timeout)
         if cp_height != 0:
             res = res["header"]
-        return blockchain.deserialize_header(bytes.fromhex(res), height)
+        return blockchain.deserialize_full_header(bytes.fromhex(res), height)
 
     async def request_chunk(self, height, tip=None, *, can_return_early=False):
         index = height // 2016
@@ -508,7 +511,7 @@ class Interface(Logger):
             item = await header_queue.get()
             raw_header = item[0]
             height = raw_header['height']
-            header = blockchain.deserialize_header(bfh(raw_header['hex']), height)
+            header = blockchain.deserialize_full_header(bfh(raw_header['hex']), height)
             self.tip_header = header
             self.tip = height
             if self.tip < constants.net.max_checkpoint():

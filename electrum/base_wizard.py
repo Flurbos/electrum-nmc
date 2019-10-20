@@ -377,7 +377,7 @@ class BaseWizard(Logger):
 
     def derivation_and_script_type_dialog(self, f):
         message1 = _('Choose the type of addresses in your wallet.')
-        message2 = '\n'.join([
+        message2 = ' '.join([
             _('You can override the suggested derivation path.'),
             _('If you are not sure what this is, leave this field unchanged.')
         ])
@@ -388,15 +388,15 @@ class BaseWizard(Logger):
             default_choice_idx = 2
             choices = [
                 ('standard',   'legacy multisig (p2sh)',            "m/45'/0"),
-                ('p2wsh-p2sh', 'p2sh-segwit multisig (p2wsh-p2sh)', purpose48_derivation(0, xtype='p2wsh-p2sh')),
-                ('p2wsh',      'native segwit multisig (p2wsh)',    purpose48_derivation(0, xtype='p2wsh')),
+                # ('p2wsh-p2sh', 'p2sh-segwit multisig (p2wsh-p2sh)', purpose48_derivation(0, xtype='p2wsh-p2sh')),
+                # ('p2wsh',      'native segwit multisig (p2wsh)',    purpose48_derivation(0, xtype='p2wsh')),
             ]
         else:
             default_choice_idx = 2
             choices = [
                 ('standard',    'legacy (p2pkh)',            bip44_derivation(0, bip43_purpose=44)),
-                ('p2wpkh-p2sh', 'p2sh-segwit (p2wpkh-p2sh)', bip44_derivation(0, bip43_purpose=49)),
-                ('p2wpkh',      'native segwit (p2wpkh)',    bip44_derivation(0, bip43_purpose=84)),
+                # ('p2wpkh-p2sh', 'p2sh-segwit (p2wpkh-p2sh)', bip44_derivation(0, bip43_purpose=49)),
+                # ('p2wpkh',      'native segwit (p2wpkh)',    bip44_derivation(0, bip43_purpose=84)),
             ]
         while True:
             try:
@@ -544,6 +544,8 @@ class BaseWizard(Logger):
                     storage_enc_version=STO_EV_XPUB_PW,
                     encrypt_keystore=False))
         else:
+            # reset stack to disable 'back' button in password dialog
+            self.reset_stack()
             # prompt the user to set an arbitrary password
             self.request_password(
                 run_next=lambda password, encrypt_storage: self.on_password(
@@ -580,6 +582,7 @@ class BaseWizard(Logger):
         if not self.pw_args:
             return
         password, encrypt_storage, storage_enc_version = self.pw_args
+        self.pw_args = None  # clean-up so that it can get GC-ed
         storage = WalletStorage(path)
         storage.set_keystore_encryption(bool(password))
         if encrypt_storage:
@@ -607,7 +610,7 @@ class BaseWizard(Logger):
             ])
         if choices is None:
             choices = [
-                ('create_segwit_seed', _('Segwit')),
+                # ('create_segwit_seed', _('Segwit')),
                 ('create_standard_seed', _('Legacy')),
             ]
         self.choice_dialog(title=title, message=message, choices=choices, run_next=self.run)

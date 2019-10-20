@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
-# Electrum - lightweight Bitcoin client
-# Copyright (C) 2012 thomasv@gitorious
+# Electrum - lightweight Unobtanium client
+# Copyright (C) 2019 choicesz@unobtanium.uno
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation files
@@ -40,7 +40,7 @@ from . import util
 
 RE_ALIAS = r'(.*?)\s*\<([0-9A-Za-z]{1,})\>'
 
-frozen_style = "QWidget { background-color:none; border:none;}"
+frozen_style = "QWidget {border:none;}"
 normal_style = "QPlainTextEdit { }"
 
 
@@ -61,10 +61,9 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
         self.errors = []
         self.is_pr = False
         self.is_alias = False
-        self.scan_f = win.pay_to_URI
+        self.is_lightning = False
         self.update_size()
         self.payto_address = None
-
         self.previous_payto = ''
 
     def setFrozen(self, b):
@@ -129,8 +128,15 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
         self.payto_address = None
         if len(lines) == 1:
             data = lines[0]
-            if data.startswith("bitcoin:"):
-                self.scan_f(data)
+            if data.startswith("unobtanium:"):
+                self.win.pay_to_URI(data)
+                return
+            l = data.lower()
+            if l.startswith("lightning:"):
+                data = l[10:]
+            if data.startswith("ln"):
+                self.win.parse_lightning_invoice(data)
+                self.lightning_invoice = data
                 return
             try:
                 self.payto_address = self.parse_output(data)
@@ -203,8 +209,8 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
 
     def qr_input(self):
         data = super(PayToEdit,self).qr_input()
-        if data.startswith("bitcoin:"):
-            self.scan_f(data)
+        if data.startswith("unobtanium:"):
+            self.win.pay_to_URI(data)
             # TODO: update fee
 
     def resolve(self):
