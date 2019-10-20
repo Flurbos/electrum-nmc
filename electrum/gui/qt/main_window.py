@@ -1637,10 +1637,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
         for o in outputs:
             if o.address is None:
-                self.show_error(_('Bitcoin Address is None'))
+                self.show_error(_('Unobtanium Address is None'))
                 return True
             if o.type == TYPE_ADDRESS and not bitcoin.is_address(o.address):
-                self.show_error(_('Invalid Bitcoin Address'))
+                self.show_error(_('Invalid Unobtanium Address'))
                 return True
             if o.value is None:
                 self.show_error(_('Invalid Amount'))
