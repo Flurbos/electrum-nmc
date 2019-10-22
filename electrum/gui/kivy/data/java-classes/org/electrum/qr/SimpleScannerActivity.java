@@ -1,4 +1,4 @@
-package org.electrum.qr;
+package org.uno.electrum.qr;
 
 import android.app.Activity;
 import android.os.Bundle;
@@ -19,7 +19,7 @@ public class SimpleScannerActivity extends Activity implements ZXingScannerView.
     private static final int MY_PERMISSIONS_CAMERA = 1002;
 
     private ZXingScannerView mScannerView = null;
-    final String TAG = "org.electrum.SimpleScannerActivity";
+    final String TAG = "org.uno.electrum.SimpleScannerActivity";
 
     @Override
     public void onResume() {
