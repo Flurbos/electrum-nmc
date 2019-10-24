@@ -59,7 +59,7 @@ from .util import bfh, bh2u
 MAX_INDEX_PC_BACKWARDS_COMPATIBILITY = 20
 
 # Header for merge-mining data in the coinbase.
-# COINBASE_MERGED_MINING_HEADER = bfh('fabe') + b'mm'
+COINBASE_MERGED_MINING_HEADER = bfh('fabe') + b'mm'
 
 BLOCK_VERSION_AUXPOW_BIT = 0x100
 MIN_AUXPOW_HEIGHT = 600000

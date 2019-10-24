@@ -58,10 +58,11 @@ extras_require['full'] = [pkg for sublist in list(extras_require.values()) for p
 
 
 setup(
-    name="Electrum",
+    name="Electrum Uno",
     version=version.ELECTRUM_VERSION,
     python_requires='>={}'.format(MIN_PYTHON_VERSION),
     install_requires=requirements,
+
     extras_require=extras_require,
     packages=[
         'electrum',
@@ -84,10 +85,10 @@ setup(
     },
     scripts=['electrum/electrum'],
     data_files=data_files,
-    description="Lightweight Bitcoin Wallet (AuxPoW fork)",
-    author="The Namecoin developers; based on Electrum by Thomas Voegtlin and Electrum-DOGE by The Electrum-DOGE contributors",
-    author_email="jeremy@namecoin.org",
+    description="Lightweight Unobtanium Wallet (AuxPoW fork)",
+    author="The Unobtanium Developers, Using work from The Namecoin developers; based on Electrum by Thomas Voegtlin and Electrum-DOGE by The Electrum-DOGE contributors",
+    author_email="choicesz@unobtanium.uno",
     license="GNU GPLv3+ for Electrum-DOGE components; MIT Licence for all other components",
-    url="https://www.namecoin.org/",
-    long_description="""Lightweight Bitcoin Wallet (AuxPoW fork)""",
+    url="https://www.unobtanium.uno/",
+    long_description="""Lightweight Unobtanium Wallet (AuxPoW fork)""",
 )

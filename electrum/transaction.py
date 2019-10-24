@@ -31,7 +31,8 @@ import struct
 import traceback
 import sys
 from typing import (Sequence, Union, NamedTuple, Tuple, Optional, Iterable,
-                    Callable, List, Dict)
+                    Callable, List, Dict, Set, TYPE_CHECKING)
+from collections import defaultdict
 
 from . import ecc, bitcoin, constants, segwit_addr
 from .util import profiler, to_bytes, bh2u, bfh
@@ -43,6 +44,9 @@ from .bitcoin import (TYPE_ADDRESS, TYPE_PUBKEY, TYPE_SCRIPT, hash_160,
 from .crypto import sha256d
 from .keystore import xpubkey_to_address, xpubkey_to_pubkey
 from .logging import get_logger
+
+if TYPE_CHECKING:
+    from .wallet import Abstract_Wallet
 
 
 _logger = get_logger(__name__)
@@ -81,9 +85,10 @@ class TxOutputForUI(NamedTuple):
 
 class TxOutputHwInfo(NamedTuple):
     address_index: Tuple
-    sorted_xpubs: Iterable[str]
+    sorted_xpubs: Sequence[str]
     num_sig: Optional[int]
     script_type: str
+    is_change: bool  # whether the wallet considers the output to be change
 
 
 class BIP143SharedTxDigestFields(NamedTuple):
@@ -626,6 +631,7 @@ class Transaction:
         self.name = None
         self.csv_delay = 0
         self.cltv_expiry = 0
+        #self.version = 2
         # by default we assume this is a partial txn;
         # this value will get properly set when deserializing
         self.is_partial_originally = True
@@ -644,12 +650,12 @@ class Transaction:
     def inputs(self):
         if self._inputs is None:
             self.deserialize()
-        return self._inputs
+        return self._inputs or []
 
     def outputs(self) -> List[TxOutput]:
         if self._outputs is None:
             self.deserialize()
-        return self._outputs
+        return self._outputs or []
 
     @classmethod
     def get_sorted_pubkeys(self, txin):
@@ -710,7 +716,7 @@ class Transaction:
         txin['witness'] = None    # force re-serialization
         self.raw = None
 
-    def add_inputs_info(self, wallet):
+    def add_inputs_info(self, wallet: 'Abstract_Wallet') -> None:
         if self.is_complete():
             return
         for txin in self.inputs():
@@ -760,16 +766,13 @@ class Transaction:
             return d
 
     @classmethod
-    def from_io(klass, inputs, outputs, locktime=0, version=None, name=None, csv_delay=0, cltv_expiry=0):
+    def from_io(klass, inputs, outputs, *, locktime=0, version=None):
         self = klass(None)
         self._inputs = inputs
         self._outputs = outputs
         self.locktime = locktime
         if version is not None:
             self.version = version
-        self.name = name
-        self.csv_delay = csv_delay
-        self.cltv_expiry = cltv_expiry
         self.BIP69_sort()
         return self
 
@@ -1215,7 +1218,7 @@ class Transaction:
                 sig = self.sign_txin(i, sec, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)
                 self.add_signature_to_txin(i, j, sig)
 
-        _logger.info(f"is_complete {self.is_complete()}")
+        _logger.debug(f"is_complete {self.is_complete()}")
         self.raw = self.serialize()
 
     def sign_txin(self, txin_index, privkey_bytes, *, bip143_shared_txdigest_fields=None) -> str:
@@ -1242,27 +1245,24 @@ class Transaction:
         return (addr in (o.address for o in self.outputs())) \
                or (addr in (txin.get("address") for txin in self.inputs()))
 
-    def get_output_idx_from_scriptpubkey(self, script: str) -> Optional[int]:
-        """Returns the index of an output with given script.
-        If there are no such outputs, returns None;
-        if there are multiple, returns one of them.
-        """
+    def get_output_idxs_from_scriptpubkey(self, script: str) -> Set[int]:
+        """Returns the set indices of outputs with given script."""
         assert isinstance(script, str)  # hex
         # build cache if there isn't one yet
         # note: can become stale and return incorrect data
         #       if the tx is modified later; that's out of scope.
         if not hasattr(self, '_script_to_output_idx'):
-            d = {}
+            d = defaultdict(set)
             for output_idx, o in enumerate(self.outputs()):
                 o_script = self.pay_script(o.type, o.address)
                 assert isinstance(o_script, str)
-                d[o_script] = output_idx
+                d[o_script].add(output_idx)
             self._script_to_output_idx = d
-        return self._script_to_output_idx.get(script)
+        return set(self._script_to_output_idx[script])  # copy
 
-    def get_output_idx_from_address(self, addr: str) -> Optional:
+    def get_output_idxs_from_address(self, addr: str) -> Set[int]:
         script = bitcoin.address_to_script(addr)
-        return self.get_output_idx_from_scriptpubkey(script)
+        return self.get_output_idxs_from_scriptpubkey(script)
 
     def as_dict(self):
         if self.raw is None:
@@ -1272,9 +1272,6 @@ class Transaction:
             'hex': self.raw,
             'complete': self.is_complete(),
             'final': self.is_final(),
-            'name': self.name,
-            'csv_delay': self.csv_delay,
-            'cltv_expiry': self.cltv_expiry,
         }
         return out
 
@@ -1282,9 +1279,6 @@ class Transaction:
     def from_dict(cls, d):
         tx = cls(d['hex'])
         tx.deserialize(True)
-        tx.name = d.get('name')
-        tx.csv_delay = d.get('csv_delay', 0)
-        tx.cltv_expiry = d.get('cltv_expiry', 0)
         return tx
 
 

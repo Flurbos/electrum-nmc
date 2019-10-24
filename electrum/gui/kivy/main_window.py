@@ -7,15 +7,15 @@ import traceback
 from decimal import Decimal
 import threading
 import asyncio
+from typing import TYPE_CHECKING, Optional
 
 from electrum.bitcoin import TYPE_ADDRESS
-from electrum.storage import WalletStorage
+from electrum.storage import WalletStorage, StorageReadWriteError
 from electrum.wallet import Wallet, InternalAddressCorruption
-from electrum.paymentrequest import InvoiceStore
 from electrum.util import profiler, InvalidPassword, send_exception_to_crash_reporter
 from electrum.plugin import run_hook
 from electrum.util import format_satoshis, format_satoshis_plain, format_fee_satoshis
-from electrum.paymentrequest import PR_UNPAID, PR_PAID, PR_UNKNOWN, PR_EXPIRED
+from electrum.util import PR_UNPAID, PR_PAID, PR_EXPIRED, PR_FAILED, PR_INFLIGHT
 from electrum import blockchain
 from electrum.network import Network, TxBroadcastError, BestEffortRequestFailed
 from .i18n import _
@@ -42,6 +42,7 @@ from .uix.dialogs.installwizard import InstallWizard
 from .uix.dialogs import InfoBubble, crash_reporter
 from .uix.dialogs import OutputList, OutputItem
 from .uix.dialogs import TopLabel, RefLabel
+from .uix.dialogs.question import Question
 
 #from kivy.core.window import Window
 #Window.softinput_mode = 'below_target'
@@ -77,6 +78,13 @@ from electrum.util import (base_units, NoDynamicFeeEstimates, decimal_point_to_b
 
 from .uix.dialogs.lightning_open_channel import LightningOpenChannelDialog
 from .uix.dialogs.lightning_channels import LightningChannelsDialog
+
+if TYPE_CHECKING:
+    from . import ElectrumGui
+    from electrum.simple_config import SimpleConfig
+    from electrum.wallet import Abstract_Wallet
+    from electrum.plugin import Plugins
+
 
 class ElectrumWindow(App):
 
@@ -152,7 +160,10 @@ class ElectrumWindow(App):
 
     use_change = BooleanProperty(False)
     def on_use_change(self, instance, x):
-        self.electrum_config.set_key('use_change', self.use_change, True)
+        if self.wallet:
+            self.wallet.use_change = self.use_change
+            self.wallet.storage.put('use_change', self.use_change)
+            self.wallet.storage.write()
 
     use_unconfirmed = BooleanProperty(False)
     def on_use_unconfirmed(self, instance, x):
@@ -195,11 +206,26 @@ class ElectrumWindow(App):
     def on_fee_histogram(self, *args):
         self._trigger_update_history()
 
-    def on_payment_received(self, event, wallet, key, status):
+    def on_request_status(self, event, key, status):
+        if key not in self.wallet.requests:
+            return
+        self.update_tab('receive')
         if self.request_popup and self.request_popup.key == key:
             self.request_popup.set_status(status)
         if status == PR_PAID:
             self.show_info(_('Payment Received') + '\n' + key)
+            self._trigger_update_history()
+
+    def on_invoice_status(self, event, key, status, log):
+        # todo: update single item
+        self.update_tab('send')
+        if status == PR_PAID:
+            self.show_info(_('Payment was sent'))
+            self._trigger_update_history()
+        elif status == PR_INFLIGHT:
+            pass
+        elif status == PR_FAILED:
+            self.show_info(_('Payment failed'))
 
     def _get_bu(self):
         decimal_point = self.electrum_config.get('decimal_point', DECIMAL_POINT_DEFAULT)
@@ -292,14 +318,13 @@ class ElectrumWindow(App):
         self.nfcscanner = None
         self.tabs = None
         self.is_exit = False
-        self.wallet = None
+        self.wallet = None  # type: Optional[Abstract_Wallet]
         self.pause_time = 0
         self.asyncio_loop = asyncio.get_event_loop()
 
         App.__init__(self)#, **kwargs)
 
-        title = _('Electrum App')
-        self.electrum_config = config = kwargs.get('config', None)
+        self.electrum_config = config = kwargs.get('config', None)  # type: SimpleConfig
         self.language = config.get('language', 'en')
         self.network = network = kwargs.get('network', None)  # type: Network
         if self.network:
@@ -313,13 +338,11 @@ class ElectrumWindow(App):
             self.proxy_config = net_params.proxy if net_params.proxy else {}
             self.update_proxy_str(self.proxy_config)
 
-        self.plugins = kwargs.get('plugins', [])
-        self.gui_object = kwargs.get('gui_object', None)
+        self.plugins = kwargs.get('plugins', None)  # type: Plugins
+        self.gui_object = kwargs.get('gui_object', None)  # type: ElectrumGui
         self.daemon = self.gui_object.daemon
         self.fx = self.daemon.fx
-
         self.use_rbf = config.get('use_rbf', True)
-        self.use_change = config.get('use_change', True)
         self.use_unconfirmed = not config.get('confirmed_only', False)
 
         # create triggers so as to minimize updating a max of 2 times a sec
@@ -343,19 +366,16 @@ class ElectrumWindow(App):
             self.show_error(_('No wallet loaded.'))
             return
         if pr.verify(self.wallet.contacts):
-            key = self.wallet.invoices.add(pr)
-            if self.invoices_screen:
-                self.invoices_screen.update()
-            status = self.wallet.invoices.get_status(key)
-            if status == PR_PAID:
+            key = pr.get_id()
+            invoice = self.wallet.get_invoice(key)
+            if invoice and invoice['status'] == PR_PAID:
                 self.show_error("invoice already paid")
                 self.send_screen.do_clear()
+            elif pr.has_expired():
+                self.show_error(_('Payment request has expired'))
             else:
-                if pr.has_expired():
-                    self.show_error(_('Payment request has expired'))
-                else:
-                    self.switch_to('send')
-                    self.send_screen.set_request(pr)
+                self.switch_to('send')
+                self.send_screen.set_request(pr)
         else:
             self.show_error("invoice error:" + pr.error)
             self.send_screen.do_clear()
@@ -408,15 +428,22 @@ class ElectrumWindow(App):
 
     def show_request(self, is_lightning, key):
         from .uix.dialogs.request_dialog import RequestDialog
-        if is_lightning:
-            request, direction, is_paid = self.wallet.lnworker.invoices.get(key) or (None, None, None)
-            status = self.wallet.lnworker.get_invoice_status(key)
-        else:
-            request = self.wallet.get_request_URI(key)
-            status, conf = self.wallet.get_request_status(key)
-        self.request_popup = RequestDialog('Request', request, key)
-        self.request_popup.set_status(status)
+        request = self.wallet.get_request(key)
+        status = request['status']
+        data = request['invoice'] if is_lightning else request['URI']
+        self.request_popup = RequestDialog('Request', data, key)
+        self.request_popup.set_status(request['status'])
         self.request_popup.open()
+
+    def show_invoice(self, is_lightning, key):
+        from .uix.dialogs.invoice_dialog import InvoiceDialog
+        invoice = self.wallet.get_invoice(key)
+        if not invoice:
+            return
+        status = invoice['status']
+        data = invoice['invoice'] if is_lightning else key
+        self.invoice_popup = InvoiceDialog('Invoice', data, key)
+        self.invoice_popup.open()
 
     def qr_dialog(self, title, data, show_text=False, text_for_clipboard=None):
         from .uix.dialogs.qr_dialog import QRDialog
@@ -437,7 +464,7 @@ class ElectrumWindow(App):
         from jnius import autoclass, cast
         from android import activity
         PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        SimpleScannerActivity = autoclass("org.electrum.qr.SimpleScannerActivity")
+        SimpleScannerActivity = autoclass("org.uno.electrum.qr.SimpleScannerActivity")
         Intent = autoclass('android.content.Intent')
         intent = Intent(PythonActivity.mActivity, SimpleScannerActivity)
 
@@ -482,6 +509,19 @@ class ElectrumWindow(App):
             mActivity = python_act.mActivity
             mActivity.moveTaskToBack(True)
 
+    def handle_crash_on_startup(func):
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as e:
+                from .uix.dialogs.crash_reporter import CrashReporter
+                # show the crash reporter, and when it's closed, shutdown the app
+                cr = CrashReporter(self, exctype=type(e), value=e, tb=e.__traceback__)
+                cr.on_dismiss = lambda: self.stop()
+                Clock.schedule_once(lambda _, cr=cr: cr.open(), 0)
+        return wrapper
+
+    @handle_crash_on_startup
     def on_start(self):
         ''' This is the start point of the kivy ui
         '''
@@ -516,9 +556,12 @@ class ElectrumWindow(App):
             self.network.register_callback(self.on_fee_histogram, ['fee_histogram'])
             self.network.register_callback(self.on_quotes, ['on_quotes'])
             self.network.register_callback(self.on_history, ['on_history'])
-            self.network.register_callback(self.on_payment_received, ['payment_received'])
+            self.network.register_callback(self.on_channels, ['channels_updated'])
+            self.network.register_callback(self.on_channel, ['channel'])
+            self.network.register_callback(self.on_invoice_status, ['invoice_status'])
+            self.network.register_callback(self.on_request_status, ['request_status'])
         # load wallet
-        self.load_wallet_by_name(self.electrum_config.get_wallet_path())
+        self.load_wallet_by_name(self.electrum_config.get_wallet_path(use_gui_last_wallet=True))
         # URI passed in config
         uri = self.electrum_config.get('url')
         if uri:
@@ -533,14 +576,15 @@ class ElectrumWindow(App):
 
     def on_wizard_complete(self, wizard, storage):
         if storage:
-            wallet = Wallet(storage)
+            wallet = Wallet(storage, config=self.electrum_config)
             wallet.start_network(self.daemon.network)
             self.daemon.add_wallet(wallet)
             self.load_wallet(wallet)
         elif not self.wallet:
             # wizard did not return a wallet; and there is no wallet open atm
             # try to open last saved wallet (potentially start wizard again)
-            self.load_wallet_by_name(self.electrum_config.get_wallet_path(), ask_if_wizard=True)
+            self.load_wallet_by_name(self.electrum_config.get_wallet_path(use_gui_last_wallet=True),
+                                     ask_if_wizard=True)
 
     def load_wallet_by_name(self, path, ask_if_wizard=False):
         if not path:
@@ -549,7 +593,7 @@ class ElectrumWindow(App):
             return
         wallet = self.daemon.load_wallet(path, None)
         if wallet:
-            if wallet.has_password():
+            if platform == 'android' and wallet.has_password():
                 self.password_dialog(wallet, _('Enter PIN code'), lambda x: self.load_wallet(wallet), self.stop)
             else:
                 self.load_wallet(wallet)
@@ -570,7 +614,6 @@ class ElectrumWindow(App):
             if not ask_if_wizard:
                 launch_wizard()
             else:
-                from .uix.dialogs.question import Question
                 def handle_answer(b: bool):
                     if b:
                         launch_wizard()
@@ -633,9 +676,20 @@ class ElectrumWindow(App):
         d.open()
 
     def lightning_channels_dialog(self):
+        if not self.wallet.has_lightning():
+            self.show_error('Lightning not enabled on this wallet')
+            return
         if self._channels_dialog is None:
             self._channels_dialog = LightningChannelsDialog(self)
         self._channels_dialog.open()
+
+    def on_channel(self, evt, chan):
+        if self._channels_dialog:
+            Clock.schedule_once(lambda dt: self._channels_dialog.update())
+
+    def on_channels(self, evt, wallet):
+        if self._channels_dialog:
+            Clock.schedule_once(lambda dt: self._channels_dialog.update())
 
     def popup_dialog(self, name):
         if name == 'settings':
@@ -728,7 +782,7 @@ class ElectrumWindow(App):
             self._trigger_update_wallet()
 
     @profiler
-    def load_wallet(self, wallet):
+    def load_wallet(self, wallet: 'Abstract_Wallet'):
         if self.wallet:
             self.stop_wallet()
         self.wallet = wallet
@@ -745,6 +799,8 @@ class ElectrumWindow(App):
         except InternalAddressCorruption as e:
             self.show_error(str(e))
             send_exception_to_crash_reporter(e)
+            return
+        self.use_change = self.wallet.use_change
 
     def update_status(self, *dt):
         if not self.wallet:
@@ -784,7 +840,7 @@ class ElectrumWindow(App):
         from electrum.transaction import TxOutput
         if run_hook('abort_send', self):
             return ''
-        inputs = self.wallet.get_spendable_coins(None, self.electrum_config)
+        inputs = self.wallet.get_spendable_coins(None)
         if not inputs:
             return ''
         addr = None
@@ -794,7 +850,7 @@ class ElectrumWindow(App):
             addr = self.wallet.dummy_address()
         outputs = [TxOutput(TYPE_ADDRESS, addr, '!')]
         try:
-            tx = self.wallet.make_unsigned_transaction(inputs, outputs, self.electrum_config)
+            tx = self.wallet.make_unsigned_transaction(inputs, outputs)
         except NoDynamicFeeEstimates as e:
             Clock.schedule_once(lambda dt, bound_e=e: self.show_error(str(bound_e)))
             return ''
@@ -1020,8 +1076,39 @@ class ElectrumWindow(App):
         else:
             f(*(args + (None,)))
 
+    def toggle_lightning(self):
+        if self.wallet.has_lightning():
+            if not bool(self.wallet.lnworker.channels):
+                warning = _('This will delete your lightning private keys')
+                d = Question(_('Disable Lightning?') + '\n\n' + warning, self._disable_lightning)
+                d.open()
+            else:
+                self.show_info('This wallet has channels')
+        else:
+            warning1 = _("Lightning support in Electrum is experimental. Do not put large amounts in lightning channels.")
+            warning2 = _("Funds stored in lightning channels are not recoverable from your seed. You must backup your wallet file everytime you create a new channel.")
+            d = Question(_('Enable Lightning?') + '\n\n' + warning1 + '\n\n' + warning2, self._enable_lightning)
+            d.open()
+
+    def _enable_lightning(self, b):
+        if not b:
+            return
+        wallet_path = self.get_wallet_path()
+        self.wallet.init_lightning()
+        self.show_info(_('Lightning keys have been initialized.'))
+        self.stop_wallet()
+        self.load_wallet_by_name(wallet_path)
+
+    def _disable_lightning(self, b):
+        if not b:
+            return
+        wallet_path = self.get_wallet_path()
+        self.wallet.remove_lightning()
+        self.show_info(_('Lightning keys have been removed.'))
+        self.stop_wallet()
+        self.load_wallet_by_name(wallet_path)
+
     def delete_wallet(self):
-        from .uix.dialogs.question import Question
         basename = os.path.basename(self.wallet.storage.path)
         d = Question(_('Delete wallet?') + '\n' + basename, self._delete_wallet)
         d.open()
@@ -1033,7 +1120,6 @@ class ElectrumWindow(App):
 
     def __delete_wallet(self, pw):
         wallet_path = self.get_wallet_path()
-        dirname = os.path.dirname(wallet_path)
         basename = os.path.basename(wallet_path)
         if self.wallet.has_password():
             try:
@@ -1044,7 +1130,7 @@ class ElectrumWindow(App):
         self.stop_wallet()
         os.unlink(wallet_path)
         self.show_error(_("Wallet removed: {}").format(basename))
-        new_path = self.electrum_config.get_wallet_path()
+        new_path = self.electrum_config.get_wallet_path(use_gui_last_wallet=True)
         self.load_wallet_by_name(new_path)
 
     def show_seed(self, label):

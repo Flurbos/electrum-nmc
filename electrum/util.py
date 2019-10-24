@@ -73,19 +73,25 @@ base_units_list = ['UNO', 'mUNO', 'bits', 'sat']  # list(dict) does not guarante
 
 DECIMAL_POINT_DEFAULT = 5  # mBTC
 
+# types of payment requests
+PR_TYPE_ONCHAIN = 0
+PR_TYPE_LN = 2
+
 # status of payment requests
-PR_UNPAID  = 0
-PR_EXPIRED = 1
-PR_UNKNOWN = 2     # sent but not propagated
-PR_PAID    = 3     # send and propagated
-PR_INFLIGHT = 4    # unconfirmed
+PR_UNPAID   = 0
+PR_EXPIRED  = 1
+PR_UNKNOWN  = 2     # sent but not propagated
+PR_PAID     = 3     # send and propagated
+PR_INFLIGHT = 4     # unconfirmed
+PR_FAILED   = 5
 
 pr_tooltips = {
     PR_UNPAID:_('Pending'),
     PR_PAID:_('Paid'),
     PR_UNKNOWN:_('Unknown'),
     PR_EXPIRED:_('Expired'),
-    PR_INFLIGHT:_('Paid (unconfirmed)')
+    PR_INFLIGHT:_('In progress'),
+    PR_FAILED:_('Failed'),
 }
 
 pr_expiration_values = {
@@ -516,11 +522,11 @@ def user_dir():
     if 'ANDROID_DATA' in os.environ:
         return android_data_dir()
     elif os.name == 'posix':
-        return os.path.join(os.environ["HOME"], ".electrum")
+        return os.path.join(os.environ["HOME"], ".electrum-uno")
     elif "APPDATA" in os.environ:
-        return os.path.join(os.environ["APPDATA"], "Electrum")
+        return os.path.join(os.environ["APPDATA"], "Electrum-uno")
     elif "LOCALAPPDATA" in os.environ:
-        return os.path.join(os.environ["LOCALAPPDATA"], "Electrum")
+        return os.path.join(os.environ["LOCALAPPDATA"], "Electrum-uno")
     else:
         #raise Exception("No home directory found in environment variables.")
         return
@@ -579,12 +585,14 @@ def format_satoshis_plain(x, decimal_point = 8):
     return "{:.8f}".format(Decimal(x) / scale_factor).rstrip('0').rstrip('.')
 
 
-DECIMAL_POINT = localeconv()['decimal_point']
+DECIMAL_POINT = localeconv()['decimal_point']  # type: str
 
 
-def format_satoshis(x, num_zeros=0, decimal_point=8, precision=None, is_diff=False, whitespaces=False):
+def format_satoshis(x, num_zeros=0, decimal_point=8, precision=None, is_diff=False, whitespaces=False) -> str:
     if x is None:
         return 'unknown'
+    if x == '!':
+        return 'max'
     if precision is None:
         precision = decimal_point
     # format string
@@ -740,7 +748,7 @@ def parse_URI(uri: str, on_pr: Callable = None, *, loop=None) -> dict:
         return {'address': uri}
 
     u = urllib.parse.urlparse(uri)
-    if u.scheme != 'bitcoin':
+    if u.scheme != 'unobtanium':
         raise InvalidBitcoinURI("Not a unobtanium URI")
     address = u.path
 
@@ -828,7 +836,7 @@ def create_bip21_uri(addr, amount_sat: Optional[int], message: Optional[str],
             raise Exception(f"illegal key for URI: {repr(k)}")
         v = urllib.parse.quote(v)
         query.append(f"{k}={v}")
-    p = urllib.parse.ParseResult(scheme='bitcoin', netloc='', path=addr, params='', query='&'.join(query), fragment='')
+    p = urllib.parse.ParseResult(scheme='unobtanium', netloc='', path=addr, params='', query='&'.join(query), fragment='')
     return str(urllib.parse.urlunparse(p))
 
 
@@ -947,7 +955,9 @@ def ignore_exceptions(func):
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except BaseException as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
             pass
     return wrapper
 

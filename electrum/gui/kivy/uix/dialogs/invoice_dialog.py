@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from kivy.factory import Factory
 from kivy.lang import Builder
 from kivy.core.clipboard import Clipboard
@@ -7,9 +9,12 @@ from kivy.clock import Clock
 from electrum.gui.kivy.i18n import _
 from electrum.util import pr_tooltips
 
+if TYPE_CHECKING:
+    from electrum.gui.kivy.main_window import ElectrumWindow
+
 
 Builder.load_string('''
-<RequestDialog@Popup>
+<InvoiceDialog@Popup>
     id: popup
     title: ''
     data: ''
@@ -23,13 +28,6 @@ Builder.load_string('''
             size_hint: 1, 1
             padding: '10dp'
             spacing: '10dp'
-            QRCodeWidget:
-                id: qr
-                shaded: False
-                foreground_color: (0, 0, 0, 0.5) if self.shaded else (0, 0, 0, 0)
-                on_touch_down:
-                    touch = args[1]
-                    if self.collide_point(*touch.pos): self.shaded = not self.shaded
             TopLabel:
                 text: root.data
             TopLabel:
@@ -57,21 +55,21 @@ Builder.load_string('''
                 Button:
                     size_hint: 1, None
                     height: '48dp'
-                    text: _('Close')
-                    on_release: popup.dismiss()
+                    text: _('Pay')
+                    on_release: root.do_pay()
 ''')
 
-class RequestDialog(Factory.Popup):
+class InvoiceDialog(Factory.Popup):
 
     def __init__(self, title, data, key):
         Factory.Popup.__init__(self)
-        self.app = App.get_running_app()
+        self.app = App.get_running_app()  # type: ElectrumWindow
         self.title = title
         self.data = data
         self.key = key
 
-    def on_open(self):
-        self.ids.qr.set_data(self.data)
+    #def on_open(self):
+    #    self.ids.qr.set_data(self.data)
 
     def set_status(self, status):
         self.status = pr_tooltips[status]
@@ -85,15 +83,20 @@ class RequestDialog(Factory.Popup):
         Clock.schedule_once(lambda dt: self.app.show_info(msg))
 
     def do_share(self):
-        self.app.do_share(self.data, _("Share Unobtanium Request"))
+        self.app.do_share(self.data, _("Share Invoice"))
+        self.dismiss()
+
+    def do_pay(self):
+        invoice = self.app.wallet.get_invoice(self.key)
+        self.app.send_screen.do_pay_invoice(invoice)
         self.dismiss()
 
     def delete_dialog(self):
         from .question import Question
         def cb(result):
             if result:
-                self.app.wallet.delete_request(self.key)
+                self.app.wallet.delete_invoice(self.key)
                 self.dismiss()
-                self.app.receive_screen.update()
-        d = Question(_('Delete request?'), cb)
+                self.app.send_screen.update()
+        d = Question(_('Delete invoice?'), cb)
         d.open()
