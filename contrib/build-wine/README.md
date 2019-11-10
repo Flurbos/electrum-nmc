@@ -36,7 +36,7 @@ folder.
         mkdir -p $FRESH_CLONE && \
         cd $FRESH_CLONE  && \
         git clone https://github.com/flurbos/electrum-uno.git && \
-        cd electrum
+        cd electrum-uno
     ```
 
     And then build from this directory:
